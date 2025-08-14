@@ -147,18 +147,18 @@ class ScreenRecorder: NSObject, ObservableObject {
             // Focus the selected window before starting recording
             if let owningApp = window.owningApplication {
                 let bundleIdentifier = owningApp.bundleIdentifier
-                print("🎯 Focusing window of app: \(owningApp.applicationName ?? "Unknown")")
+                print("🎯 Focusing window of app: \(owningApp.applicationName)")
                 
                 // Use NSWorkspace to activate the app by bundle identifier
                 let workspace = NSWorkspace.shared
                 if let runningApp = workspace.runningApplications.first(where: { $0.bundleIdentifier == bundleIdentifier }) {
                     // Activate the app to bring it to front
-                    runningApp.activate(options: [.activateIgnoringOtherApps])
+                    runningApp.activate()
                     
                     // Small delay to ensure app activation completes
                     try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
                     
-                    print("✅ App activated: \(owningApp.applicationName ?? bundleIdentifier)")
+                    print("✅ App activated: \(owningApp.applicationName)")
                 } else {
                     print("⚠️ Could not find running app with bundle ID: \(bundleIdentifier)")
                 }
@@ -236,10 +236,13 @@ class ScreenRecorder: NSObject, ObservableObject {
             // Only do this if we're not recording MyScreenStudio itself
             if let appName = window.owningApplication?.applicationName,
                !appName.contains("MyScreenStudio") {
-                // Minimize all MyScreenStudio windows
+                // Minimize all MyScreenStudio windows except Dynamic Island (small window)
                 await MainActor.run {
                     for window in NSApplication.shared.windows {
-                        window.miniaturize(nil)
+                        // Don't minimize the Dynamic Island (small window < 500px width)
+                        if window.frame.width >= 500 {
+                            window.miniaturize(nil)
+                        }
                     }
                 }
                 print("🎬 MyScreenStudio minimized to avoid interfering with recording")

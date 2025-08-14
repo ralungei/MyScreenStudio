@@ -24,16 +24,18 @@ struct ModernButton: View {
                 if let icon = icon {
                     Image(systemName: icon)
                         .font(.system(size: style.iconSize, weight: style.iconWeight))
+                        .foregroundColor(isDisabled ? style.disabledForeground : style.foreground)
                 }
                 
                 Text(title)
                     .fontWeight(style.fontWeight)
+                    .foregroundColor(isDisabled ? style.disabledForeground : style.foreground)
             }
             .padding(.horizontal, style.horizontalPadding)
             .padding(.vertical, style.verticalPadding)
         }
         .background(isDisabled ? style.disabledBackground : style.background)
-        .foregroundStyle(isDisabled ? style.disabledForeground : style.foreground)
+        .foregroundColor(isDisabled ? style.disabledForeground : style.foreground)
         .cornerRadius(style.cornerRadius)
         .contentShape(Rectangle())
         .opacity(isDisabled ? 0.5 : 1.0)
@@ -49,7 +51,7 @@ enum ModernButtonStyle {
     
     var background: Color {
         switch self {
-        case .primary: return .blue
+        case .primary: return Color(hex: "A4EB3F")
         case .secondary: return .gray.opacity(0.1)
         case .destructive: return .red.opacity(0.1)
         }
@@ -65,7 +67,7 @@ enum ModernButtonStyle {
     
     var foreground: Color {
         switch self {
-        case .primary: return .white
+        case .primary: return .black
         case .secondary: return .secondary
         case .destructive: return .red
         }
@@ -83,7 +85,7 @@ enum ModernButtonStyle {
         }
     }
     
-    var verticalPadding: CGFloat { 12 }
+    var verticalPadding: CGFloat { 8 }
     
     var cornerRadius: CGFloat { 20 }
     

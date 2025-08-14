@@ -5,6 +5,7 @@ import AVFoundation
 struct VideoEditorView: View {
     let project: RecordingProject
     @ObservedObject var projectManager: ProjectManager
+    @Environment(\.dismiss) private var dismiss
     @State private var selectedTab = "background"
     @State private var effectSegments: [String: [EffectSegment]] = [
         "ZOOM": [EffectSegment(startOffset: 100, width: 80), EffectSegment(startOffset: 220, width: 60)]
@@ -53,28 +54,38 @@ struct VideoEditorView: View {
         VStack(spacing: 0) {
             // Top Toolbar - Natural height based on content
             HStack {
-                Text("PROJECT: \(project.name)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                // Close button a la izquierda
+                Button(action: {
+                    NSApplication.shared.keyWindow?.close()
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .frame(width: 28, height: 28)
+                .background(.gray.opacity(0.1))
+                .cornerRadius(14)
+                
+                Spacer()
+                    .frame(width: 20)
+                
+                // Título en dos filas
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("PROJECT")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .textCase(.uppercase)
+                    Text(project.name)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                }
                 
                 Spacer()
                 
-                HStack(spacing: 8) {
-                    ModernButton("Export", icon: "square.and.arrow.up", style: .primary) {
-                        showingExportSheet = true
-                    }
-                    
-                    Button(action: {
-                        projectManager.closeProject()
-                    }) {
-                        Image(systemName: "xmark")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: 28, height: 28)
-                    .background(.gray.opacity(0.1))
-                    .cornerRadius(14)
+                // Export button
+                ModernButton("Export", icon: "square.and.arrow.up", style: .primary) {
+                    showingExportSheet = true
                 }
             }
             .padding()
@@ -404,7 +415,13 @@ struct VideoEditorView: View {
         }
         .navigationTitle("Video Editor - \(project.name)")
         .background(Color(NSColor.windowBackgroundColor))
+        .edgesIgnoringSafeArea(.top)
         .onAppear {
+            // Maximizar la ventana al abrir
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                NSApplication.shared.keyWindow?.zoom(nil)
+            }
+            
             // Always enable background and cursor for VideoEditorView
             sharedBackgroundManager.isEnabled = true
             sharedCursorManager.isEnabled = true
