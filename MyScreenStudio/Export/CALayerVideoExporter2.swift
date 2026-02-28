@@ -542,6 +542,7 @@ class CALayerVideoExporter2 {
                    hotSpot: cursorSettings.cursorHotSpot,
                    scale: cursorSettings.cursorScale,
                    videoSize: videoSize,
+                   canvasSize: canvasSize,
                    positions: smoothedPositions,
                    duration: duration
                )
@@ -710,6 +711,7 @@ class CALayerVideoExporter2 {
        hotSpot: CGPoint,
        scale: CGFloat,
        videoSize: CGSize,
+       canvasSize: CGSize,
        positions: [(time: Double, point: CGPoint)],
        duration: Double
    ) -> CALayer {
@@ -752,6 +754,39 @@ class CALayerVideoExporter2 {
            posAnim.fillMode = .both
            posAnim.calculationMode = .linear
            cursorLayer.add(posAnim, forKey: "cursorPosition")
+       }
+
+       // Opacity animation — hide cursor when it exits the canvas bounds.
+       // Preview clips via .clipShape(); export needs an explicit opacity fade.
+       let canvasBounds = CGRect(origin: .zero, size: canvasSize)
+       // Small inset margin: once cursor center is past the canvas edge, fade out
+       let margin: CGFloat = cursorW * 0.5
+       let visibleBounds = canvasBounds.insetBy(dx: -margin, dy: -margin)
+
+       var hasOffscreen = false
+       var opacityValues: [NSNumber] = []
+       var opacityKeyTimes: [NSNumber] = []
+       opacityValues.reserveCapacity(positions.count)
+       opacityKeyTimes.reserveCapacity(positions.count)
+
+       for p in positions {
+           let keyTime = NSNumber(value: p.time / max(duration, 0.001))
+           let isVisible = visibleBounds.contains(p.point)
+           opacityValues.append(NSNumber(value: isVisible ? 1.0 : 0.0))
+           opacityKeyTimes.append(keyTime)
+           if !isVisible { hasOffscreen = true }
+       }
+
+       if hasOffscreen {
+           let opacityAnim = CAKeyframeAnimation(keyPath: "opacity")
+           opacityAnim.values = opacityValues
+           opacityAnim.keyTimes = opacityKeyTimes
+           opacityAnim.duration = duration
+           opacityAnim.beginTime = AVCoreAnimationBeginTimeAtZero
+           opacityAnim.isRemovedOnCompletion = false
+           opacityAnim.fillMode = .both
+           opacityAnim.calculationMode = .linear
+           cursorLayer.add(opacityAnim, forKey: "cursorVisibility")
        }
 
        return cursorLayer
