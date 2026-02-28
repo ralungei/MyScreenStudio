@@ -49,12 +49,12 @@ struct SettingsView: View {
                 Label("Shortcuts", systemImage: "keyboard")
             }
             
-            CursorSettingsView()
+            CursorSettingsTab()
             .tabItem {
                 Label("Cursor", systemImage: "cursorarrow.click")
             }
-            
-            BackgroundSettingsView()
+
+            BackgroundSettingsTab()
             .tabItem {
                 Label("Background", systemImage: "photo.on.rectangle")
             }
@@ -249,6 +249,57 @@ struct ShortcutRow: View {
                 .cornerRadius(4)
                 .font(.system(.body, design: .monospaced))
         }
+    }
+}
+
+// MARK: - Cursor Settings Tab
+struct CursorSettingsTab: View {
+    @State private var cursorManager = CursorManager()
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Enable Custom Cursor", isOn: $cursorManager.isEnabled)
+
+                if cursorManager.isEnabled {
+                    ForEach(cursorManager.availableCursors) { cursor in
+                        HStack {
+                            if let img = NSImage(contentsOfFile: cursor.imagePath) {
+                                Image(nsImage: img)
+                                    .resizable()
+                                    .frame(width: 24, height: 24)
+                            }
+                            Text(cursor.name)
+                            Spacer()
+                            if cursorManager.selectedCursor?.id == cursor.id {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { cursorManager.selectedCursor = cursor }
+                    }
+                }
+            } header: {
+                Text("Custom Cursor")
+            }
+        }
+        .padding()
+    }
+}
+
+// MARK: - Background Settings Tab
+struct BackgroundSettingsTab: View {
+    var body: some View {
+        Form {
+            Section {
+                Text("Background settings are available in the project editor sidebar.")
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("Background")
+            }
+        }
+        .padding()
     }
 }
 

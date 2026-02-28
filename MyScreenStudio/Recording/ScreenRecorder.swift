@@ -26,13 +26,19 @@ class ScreenRecorder: NSObject, ObservableObject {
     @Published var showMouseClicks = true
     
     let cursorManager = CursorManager()
-    let backgroundManager = BackgroundManager()
     let mouseTracker = MouseTracker()
+    /// Injected by DynamicIslandBar so createProject uses the shared instance.
+    var projectManager: ProjectManager?
     
     private var stream: SCStream?
     private var streamOutput: CaptureEngineStreamOutput?
     private var startTime: Date?
     private var timer: Timer?
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
+
+    /// The keyboard shortcut shown in the Dynamic Island bar
+    static let stopShortcutLabel = "\u{2318}\u{21E7}R"
     
     override init() {
         super.init()
@@ -214,9 +220,8 @@ class ScreenRecorder: NSObject, ObservableObject {
             print("🎯 Configuration complete - capturing window at \(adjustedWidth)x\(adjustedHeight)")
             
             streamOutput = CaptureEngineStreamOutput(
-                width: adjustedWidth, // Use exact window dimensions
+                width: adjustedWidth,
                 height: adjustedHeight,
-                backgroundManager: backgroundManager,
                 recordingMode: .window
             )
             
@@ -230,25 +235,12 @@ class ScreenRecorder: NSObject, ObservableObject {
             cursorManager.setCursorForRecording()
             
             // Start mouse tracking for window recording
-            mouseTracker.startTracking(windowFrame: window.frame)
+            mouseTracker.startTracking(windowFrame: window.frame, recordedArea: window.frame)
             
-            // Optionally minimize MyScreenStudio to get out of the way
-            // Only do this if we're not recording MyScreenStudio itself
-            if let appName = window.owningApplication?.applicationName,
-               !appName.contains("MyScreenStudio") {
-                // Minimize all MyScreenStudio windows except Dynamic Island (small window)
-                await MainActor.run {
-                    for window in NSApplication.shared.windows {
-                        // Don't minimize the Dynamic Island (small window < 500px width)
-                        if window.frame.width >= 500 {
-                            window.miniaturize(nil)
-                        }
-                    }
-                }
-                print("🎬 MyScreenStudio minimized to avoid interfering with recording")
-            }
+            // No backdrop — let the user interact freely with the rest of the Mac
             
             isRecording = true
+            installStopShortcut()
             startTime = Date()
             
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -276,11 +268,11 @@ class ScreenRecorder: NSObject, ObservableObject {
             configuration.height = Int(area.height) * 2
             configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
             configuration.queueDepth = 5
-            
+            configuration.showsCursor = false
+
             streamOutput = CaptureEngineStreamOutput(
-                width: Int(area.width) * 2, 
+                width: Int(area.width) * 2,
                 height: Int(area.height) * 2,
-                backgroundManager: backgroundManager,
                 recordingMode: .area
             )
             
@@ -293,12 +285,13 @@ class ScreenRecorder: NSObject, ObservableObject {
             // Apply custom cursor for recording
             cursorManager.setCursorForRecording()
             
-            // Start mouse tracking
-            mouseTracker.startTracking(windowFrame: recordingMode == .window ? selectedWindow?.frame : selectedArea)
-            
+            // Start mouse tracking with area bounds
+            mouseTracker.startTracking(windowFrame: selectedArea, recordedArea: selectedArea)
+
             isRecording = true
+            installStopShortcut()
             startTime = Date()
-            
+
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     if let start = self?.startTime {
@@ -306,7 +299,7 @@ class ScreenRecorder: NSObject, ObservableObject {
                     }
                 }
             }
-            
+
         } catch {
             print("Failed to start area recording: \(error)")
         }
@@ -323,11 +316,11 @@ class ScreenRecorder: NSObject, ObservableObject {
             configuration.height = display.height
             configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
             configuration.queueDepth = 5
-            
+            configuration.showsCursor = false
+
             streamOutput = CaptureEngineStreamOutput(
-                width: display.width, 
+                width: display.width,
                 height: display.height,
-                backgroundManager: backgroundManager,
                 recordingMode: .fullScreen
             )
             
@@ -343,12 +336,14 @@ class ScreenRecorder: NSObject, ObservableObject {
             // Apply custom cursor for recording
             cursorManager.setCursorForRecording()
             
-            // Start mouse tracking
-            mouseTracker.startTracking(windowFrame: recordingMode == .window ? selectedWindow?.frame : selectedArea)
-            
+            // Start mouse tracking with display area
+            let displayArea = CGRect(x: 0, y: 0, width: CGFloat(display.width), height: CGFloat(display.height))
+            mouseTracker.startTracking(windowFrame: nil, recordedArea: displayArea)
+
             isRecording = true
+            installStopShortcut()
             startTime = Date()
-            
+
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     if let start = self?.startTime {
@@ -356,12 +351,40 @@ class ScreenRecorder: NSObject, ObservableObject {
                     }
                 }
             }
-            
+
         } catch {
             print("Failed to start recording: \(error)")
         }
     }
     
+    // MARK: - Global Stop-Recording Shortcut (Cmd+Shift+R)
+
+    private func installStopShortcut() {
+        let handler: (NSEvent) -> Void = { [weak self] event in
+            // Cmd+Shift+R
+            guard event.modifierFlags.contains([.command, .shift]),
+                  event.keyCode == 15 else { return }  // 15 = R
+            Task { @MainActor [weak self] in
+                await self?.stopRecording()
+            }
+        }
+
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: handler)
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.modifierFlags.contains([.command, .shift]),
+                  event.keyCode == 15 else { return event }
+            Task { @MainActor [weak self] in
+                await self?.stopRecording()
+            }
+            return nil
+        }
+    }
+
+    private func removeStopShortcut() {
+        if let m = globalKeyMonitor { NSEvent.removeMonitor(m); globalKeyMonitor = nil }
+        if let m = localKeyMonitor  { NSEvent.removeMonitor(m); localKeyMonitor = nil }
+    }
+
     func pauseRecording() {
         isPaused = true
         timer?.invalidate()
@@ -395,6 +418,7 @@ class ScreenRecorder: NSObject, ObservableObject {
         isRecording = false
         isPaused = false
         timer?.invalidate()
+        removeStopShortcut()
         recordingDuration = 0
         
         if let output = streamOutput {
@@ -429,9 +453,9 @@ class ScreenRecorder: NSObject, ObservableObject {
             smoothCursor: true,
             smoothingIntensity: 0.5
         )
-        
-        let projectManager = ProjectManager()
-        let project = projectManager.createProject(
+
+        let pm = projectManager ?? ProjectManager()
+        let project = pm.createProject(
             name: "Recording \(Date().formatted(date: .abbreviated, time: .shortened))",
             videoURL: videoURL,
             settings: settings
@@ -464,17 +488,14 @@ class CaptureEngineStreamOutput: NSObject, SCStreamOutput {
     private var videoHeight: Int
     private var sampleBufferCount = 0
     private var hasLoggedFormat = false
-    private let backgroundManager: BackgroundManager?
     private let recordingMode: RecordingMode
-    private let context = CIContext()
-    
-    init(width: Int, height: Int, backgroundManager: BackgroundManager? = nil, recordingMode: RecordingMode = .fullScreen) {
+
+    init(width: Int, height: Int, recordingMode: RecordingMode = .fullScreen) {
         // Create a temporary directory for recordings
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = "Recording_\(Date().timeIntervalSince1970).mov"
         outputURL = tempDir.appendingPathComponent(fileName)
         
-        self.backgroundManager = backgroundManager
         self.recordingMode = recordingMode
         
         // For window recording with dynamic dimensions, defer setup until first frame
@@ -634,10 +655,7 @@ class CaptureEngineStreamOutput: NSObject, SCStreamOutput {
             sampleBufferCount += 1
             let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             
-            // Apply background if enabled
-            let processedBuffer = applyBackgroundIfNeeded(to: pixelBuffer)
-            
-            if pixelBufferAdaptor.append(processedBuffer, withPresentationTime: presentationTime) {
+            if pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime) {
                 if sampleBufferCount <= 10 || sampleBufferCount % 60 == 0 {
                     print("Successfully appended pixel buffer #\(sampleBufferCount)")
                 }
@@ -682,62 +700,6 @@ class CaptureEngineStreamOutput: NSObject, SCStreamOutput {
         return nil
     }
     
-    private func applyBackgroundIfNeeded(to pixelBuffer: CVPixelBuffer) -> CVPixelBuffer {
-        guard recordingMode == .window else {
-            return pixelBuffer
-        }
-        
-        // Background and effects are now applied only in playback, not during recording
-        // This ensures window recordings contain only the window content
-        return pixelBuffer
-        
-        // Convert pixel buffer to CIImage
-        /*let inputImage = CIImage(cvPixelBuffer: pixelBuffer)
-        
-        // Calculate canvas size with padding
-        let canvasSize = CGSize(width: videoWidth, height: videoHeight)
-        let windowFrame = inputImage.extent
-        
-        // Apply background
-        let processedImage = backgroundManager.applyBackground(
-            to: inputImage,
-            windowFrame: windowFrame,
-            canvasSize: canvasSize
-        )*/
-        
-        // Convert back to pixel buffer
-        /*guard let outputBuffer = createPixelBuffer(from: processedImage, size: canvasSize) else {
-            print("Failed to create output pixel buffer")
-            return pixelBuffer
-        }
-        
-        return outputBuffer*/
-    }
-    
-    private func createPixelBuffer(from image: CIImage, size: CGSize) -> CVPixelBuffer? {
-        let attributes: [String: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
-        
-        var pixelBuffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            Int(size.width),
-            Int(size.height),
-            kCVPixelFormatType_32BGRA,
-            attributes as CFDictionary,
-            &pixelBuffer
-        )
-        
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            return nil
-        }
-        
-        context.render(image, to: buffer)
-        return buffer
-    }
     
     private func fastStart(url: URL, fileType: AVFileType) async -> URL? {
         let asset = AVAsset(url: url)

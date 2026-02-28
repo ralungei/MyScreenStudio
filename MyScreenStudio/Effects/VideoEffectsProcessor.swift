@@ -4,13 +4,15 @@ import CoreVideo
 import AVFoundation
 import Vision
 import AppKit
+import Observation
 
-class VideoEffectsProcessor: ObservableObject {
-    @Published var zoomLevel: CGFloat = 1.0
-    @Published var cursorSmoothness: CGFloat = 0.5
-    @Published var showCursor: Bool = true
-    @Published var enableMotionBlur: Bool = false
-    @Published var enableBackgroundBlur: Bool = false
+@Observable
+class VideoEffectsProcessor {
+    var zoomLevel: CGFloat = 1.0
+    var cursorSmoothness: CGFloat = 0.5
+    var showCursor: Bool = true
+    var enableMotionBlur: Bool = false
+    var enableBackgroundBlur: Bool = false
     
     private var context = CIContext()
     private var cursorTracker = CursorTracker()

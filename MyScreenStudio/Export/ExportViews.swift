@@ -7,9 +7,15 @@ struct ExportConfigurationView: View {
     let backgroundSettings: BackgroundSettings
     let videoSize: CGSize
     let aspectRatio: CGFloat
-    @ObservedObject var exportManager: CALayerVideoExporter2
+    var exportManager: CALayerVideoExporter2
     @Binding var showingExportProgress: Bool
-    
+    var cursorManager: CursorManager?
+    var mouseMetadata: CursorMetadata?
+    var zoomSegments: [ZoomSegment] = []
+    var videoClips: [VideoClip] = []
+    var typingSegments: [TypingSegment] = []
+    var cropRect: CropRect = .full
+
     @State private var selectedQuality: VideoQuality = .ultra
     @State private var selectedFormat: ExportFormat = .mp4
     @State private var outputFileName: String = ""
@@ -29,18 +35,6 @@ struct ExportConfigurationView: View {
     
     var body: some View {
         ZStack {
-            // Dynamic Island inspired background
-            RoundedRectangle(cornerRadius: 28)
-                .fill(.ultraThinMaterial)
-                .background(
-                    RoundedRectangle(cornerRadius: 28)
-                        .fill(.black.opacity(0.05))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 28)
-                        .stroke(.white.opacity(0.1), lineWidth: 1)
-                )
-            
             ScrollView {
                 VStack(spacing: 20) {
                     // Compact Header with icon
@@ -86,12 +80,7 @@ struct ExportConfigurationView: View {
                         TextField("Enter file name", text: $outputFileName)
                             .textFieldStyle(.plain)
                             .padding(12)
-                            .background(.gray.opacity(0.08))
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(.gray.opacity(0.2), lineWidth: 1)
-                            )
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
                     }
                     
                     // Quality & Format - Pill Style
@@ -188,6 +177,7 @@ struct ExportConfigurationView: View {
                 .padding(24)
             }
         }
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28))
         .frame(width: 420, height: 520)
         .onAppear {
             // Auto-generate filename
@@ -199,9 +189,10 @@ struct ExportConfigurationView: View {
     
     // MARK: - Helper Methods
     private func calculateOutputSize() -> CGSize {
-        let paddedWidth = videoSize.width + (backgroundSettings.padding * 2)
-        let paddedHeight = videoSize.height + (backgroundSettings.padding * 2)
-        
+        let vs = cropRect.isFull ? videoSize : cropRect.croppedSize(for: videoSize)
+        let paddedWidth = vs.width + (backgroundSettings.padding * 2)
+        let paddedHeight = vs.height + (backgroundSettings.padding * 2)
+
         if aspectRatio == 0 { // Auto mode
             return CGSize(
                 width: ceil(paddedWidth / 2) * 2,
@@ -211,60 +202,85 @@ struct ExportConfigurationView: View {
             // Fixed aspect ratio modes
             let containerHeight = paddedHeight
             let containerWidth = containerHeight * aspectRatio
-            
+
             let finalWidth = max(ceil(containerWidth / 2) * 2, 1920)
             let finalHeight = ceil(finalWidth / aspectRatio / 2) * 2
-            
+
             return CGSize(width: finalWidth, height: finalHeight)
         }
     }
     
-    private var aspectRatioText: String {
-        if aspectRatio == 16.0/9.0 {
-            return "16:9"
-        } else if aspectRatio == 4.0/3.0 {
-            return "4:3"
-        } else if aspectRatio == 1.0 {
-            return "1:1"
-        } else {
-            return String(format: "%.2f:1", aspectRatio)
-        }
-    }
-    
     private func startExport() {
-        // Create output URL
         let fileName = outputFileName.trimmingCharacters(in: .whitespacesAndNewlines)
         let fileExtension = selectedFormat.fileExtension
         let outputURL = getExportURL(fileName: "\(fileName).\(fileExtension)")
-        
-        // Use NEW CALayer-based exporter (CORRECT APPROACH)
-        let layerExporter = CALayerVideoExporter2()
+
         let sourceVideoURL = URL(fileURLWithPath: project.videoPath)
-        
-        layerExporter.exportVideoWithEffects(
+
+        // Build cursor export settings
+        var cursorSettings = CursorExportSettings()
+        if let cm = cursorManager, cm.isEnabled, let selected = cm.selectedCursor, !selected.imagePath.isEmpty {
+            if let nsImg = NSImage(contentsOfFile: selected.imagePath),
+               let cgImg = nsImg.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                cursorSettings.cursorImage = cgImg
+                // Convert hotspot from NSImage points to CGImage pixels
+                // (export divides by CGImage pixel dimensions)
+                let scaleX = CGFloat(cgImg.width) / max(nsImg.size.width, 1)
+                let scaleY = CGFloat(cgImg.height) / max(nsImg.size.height, 1)
+                cursorSettings.cursorHotSpot = CGPoint(
+                    x: selected.hotSpot.x * scaleX,
+                    y: selected.hotSpot.y * scaleY
+                )
+                cursorSettings.cursorScale = cm.cursorScale
+                cursorSettings.smoothingFactor = cm.smoothing
+            }
+        }
+        // Click effect settings work independently of cursor image
+        if let cm = cursorManager {
+            cursorSettings.showClickEffects = cm.showClickEffects
+            cursorSettings.clickEffectStyle = cm.clickEffectStyle
+            cursorSettings.clickEffectColor = NSColor(cm.clickEffectColor).cgColor
+            cursorSettings.clickEffectSize = cm.clickEffectSize
+        }
+        cursorSettings.mouseMetadata = mouseMetadata
+        cursorSettings.recordedArea = mouseMetadata?.recordedArea ?? mouseMetadata?.windowFrame
+
+        // Build zoom export settings
+        var zoomExportSettings = ZoomExportSettings()
+        zoomExportSettings.segments = zoomSegments
+        zoomExportSettings.autoFollowCursor = false  // Preview has no auto-follow — only manual segments
+        zoomExportSettings.autoFollowScale = 1.15
+
+        // Use the shared exportManager so progress updates reach ExportProgressView
+        exportManager.exportVideoWithEffects(
             sourceVideoURL: sourceVideoURL,
             outputURL: outputURL,
             backgroundSettings: backgroundSettings,
             aspectRatio: aspectRatio,
-            quality: selectedQuality
+            quality: selectedQuality,
+            cursorSettings: cursorSettings,
+            zoomSettings: zoomExportSettings,
+            clips: videoClips,
+            typingSegments: typingSegments,
+            cropRect: cropRect
         ) { result in
-            switch result {
-            case .success(let outputURL):
-                print("✅ CALayer Export completed: \(outputURL.path)")
-                // Show in Finder
-                NSWorkspace.shared.selectFile(outputURL.path, inFileViewerRootedAtPath: outputURL.deletingLastPathComponent().path)
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let url):
+                    print("✅ Export completed: \(url.path)")
+                    NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
+                case .failure(let error):
+                    print("❌ Export failed: \(error.localizedDescription)")
+                }
                 showingExportProgress = false
-                dismiss()
-            case .failure(let error):
-                print("❌ CALayer Export failed: \(error.localizedDescription)")
-                showingExportProgress = false
-                dismiss()
             }
         }
-        
-        // Show progress
+
+        // Dismiss config sheet first, then show progress
         dismiss()
-        showingExportProgress = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            showingExportProgress = true
+        }
     }
     
     private func getExportURL(fileName: String) -> URL {
@@ -280,23 +296,11 @@ struct ExportConfigurationView: View {
 
 // MARK: - Export Progress View (Dynamic Island Style)
 struct ExportProgressView: View {
-    @ObservedObject var exportManager: CALayerVideoExporter2
+    var exportManager: CALayerVideoExporter2
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         ZStack {
-            // Dynamic Island background
-            RoundedRectangle(cornerRadius: 32)
-                .fill(.ultraThinMaterial)
-                .background(
-                    RoundedRectangle(cornerRadius: 32)
-                        .fill(.black.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 32)
-                        .stroke(.white.opacity(0.15), lineWidth: 1)
-                )
-            
             VStack(spacing: 24) {
                 // Modern Progress Ring
                 VStack(spacing: 16) {
@@ -312,7 +316,7 @@ struct ExportProgressView: View {
                             .stroke(.blue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
                             .frame(width: 100, height: 100)
                             .rotationEffect(.degrees(-90))
-                            .animation(.spring(duration: 0.5), value: exportManager.exportProgress)
+                            .animation(.linear(duration: 0.1), value: exportManager.exportProgress)
                         
                         // Center content
                         VStack(spacing: 4) {
@@ -350,7 +354,7 @@ struct ExportProgressView: View {
                         StatPill(
                             icon: "clock",
                             label: "Time Left",
-                            value: formatTime(progressData.estimatedTimeRemaining)
+                            value: TimeFormatting.mmss(progressData.estimatedTimeRemaining)
                         )
                     }
                 }
@@ -363,19 +367,15 @@ struct ExportProgressView: View {
             }
             .padding(28)
         }
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 32))
         .frame(width: 320, height: 360)
-        .onReceive(exportManager.$isExporting) { isExporting in
+        .onChange(of: exportManager.isExporting) { _, isExporting in
             if !isExporting {
                 dismiss()
             }
         }
     }
     
-    private func formatTime(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%02d:%02d", minutes, seconds)
-    }
 }
 
 // MARK: - Summary Pill Component
@@ -450,128 +450,3 @@ struct StatPill: View {
 }
 
 
-// MARK: - Modern Slider Component
-struct ModernSlider: View {
-    let title: String
-    @Binding var value: CGFloat
-    let range: ClosedRange<CGFloat>
-    let step: CGFloat
-    let unit: String
-    
-    init(_ title: String, value: Binding<CGFloat>, range: ClosedRange<CGFloat>, step: CGFloat = 1, unit: String = "px") {
-        self.title = title
-        self._value = value
-        self.range = range
-        self.step = step
-        self.unit = unit
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Spacer()
-                
-                Text("\(Int(value))\(unit)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.gray.opacity(0.1))
-                    .cornerRadius(6)
-            }
-            
-            // Modern track with pills for common values
-            VStack(spacing: 6) {
-                // Custom slider track
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        // Track background
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(.gray.opacity(0.2))
-                            .frame(height: 6)
-                        
-                        // Progress
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(.blue)
-                            .frame(width: progressWidth(geometry.size.width), height: 6)
-                        
-                        // Thumb
-                        Circle()
-                            .fill(.white)
-                            .frame(width: 16, height: 16)
-                            .shadow(color: .black.opacity(0.2), radius: 2)
-                            .offset(x: thumbOffset(geometry.size.width))
-                    }
-                    .gesture(
-                        DragGesture()
-                            .onChanged { gesture in
-                                let newValue = range.lowerBound + (range.upperBound - range.lowerBound) * (gesture.location.x / geometry.size.width)
-                                value = max(range.lowerBound, min(range.upperBound, newValue))
-                                value = round(value / step) * step
-                            }
-                    )
-                }
-                .frame(height: 20)
-                
-                // Quick value pills
-                HStack(spacing: 8) {
-                    ForEach(quickValues, id: \.self) { quickValue in
-                        Button("\(Int(quickValue))") {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                value = quickValue
-                            }
-                        }
-                        .font(.caption2)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(abs(value - quickValue) < 1 ? .blue : .gray.opacity(0.1))
-                        .foregroundStyle(abs(value - quickValue) < 1 ? .white : .secondary)
-                        .cornerRadius(12)
-                        .animation(.easeInOut(duration: 0.15), value: value)
-                    }
-                    
-                    Spacer()
-                }
-            }
-        }
-    }
-    
-    private var quickValues: [CGFloat] {
-        if title.lowercased().contains("padding") {
-            return [0, 80, 120, 160, 200]
-        } else if title.lowercased().contains("corner") {
-            return [0, 5, 10, 15, 25]
-        } else {
-            return []
-        }
-    }
-    
-    private func progressWidth(_ totalWidth: CGFloat) -> CGFloat {
-        let progress = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
-        return max(0, min(totalWidth, totalWidth * progress))
-    }
-    
-    private func thumbOffset(_ totalWidth: CGFloat) -> CGFloat {
-        let progress = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
-        return max(0, min(totalWidth - 16, (totalWidth - 16) * progress))
-    }
-}
-
-// MARK: - Info Row Helper (Legacy)
-struct InfoRow: View {
-    let label: String
-    let value: String
-    
-    var body: some View {
-        HStack {
-            Text(label)
-                .foregroundColor(.secondary)
-            Spacer()
-            Text(value)
-        }
-    }
-}

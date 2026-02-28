@@ -25,6 +25,8 @@ struct VideoPreviewView: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
                         .font(.title2)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -75,6 +77,8 @@ struct VideoPreviewView: View {
                     }) {
                         Image(systemName: "backward.fill")
                             .font(.title3)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     
@@ -93,6 +97,8 @@ struct VideoPreviewView: View {
                     }) {
                         Image(systemName: "forward.fill")
                             .font(.title3)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     
@@ -121,6 +127,7 @@ struct VideoPreviewView: View {
                     isPresented = false
                 }
                 .buttonStyle(.plain)
+                .contentShape(Rectangle())
                 .foregroundColor(.red)
                 
                 Spacer()

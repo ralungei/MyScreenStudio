@@ -24,10 +24,11 @@ struct RecordingSourcePicker: View {
                     Text("Full Screen").tag("screen")
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 300)
+                .frame(maxWidth: .infinity)
+                .fixedSize(horizontal: false, vertical: true)
             }
             .padding()
-            .background(Color(NSColor.windowBackgroundColor))
+            .background(.background)
             
             Divider()
             
@@ -52,24 +53,36 @@ struct RecordingSourcePicker: View {
                     EmptyView()
                 }
             }
-            .frame(height: 400)
+            .padding(.horizontal)
+            .frame(maxWidth: .infinity)
+            .clipped()
             
             Divider()
             
             // Footer
-            HStack {
+            HStack(alignment: .center, spacing: 12) {
                 Button("Cancel") {
                     isPresented = false
                 }
                 .keyboardShortcut(.escape)
-                
-                Spacer()
-                
-                Toggle("Record Audio", isOn: $recorder.recordAudio)
-                Toggle("Show Mouse Clicks", isOn: $recorder.showMouseClicks)
-                
-                Spacer()
-                
+
+                Spacer(minLength: 8)
+
+                // Middle controls can wrap vertically if needed
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        Toggle(isOn: $recorder.recordAudio) {
+                            Text("Record Audio").lineLimit(1).truncationMode(.tail)
+                        }
+                        Toggle(isOn: $recorder.showMouseClicks) {
+                            Text("Show Mouse Clicks").lineLimit(1).truncationMode(.tail)
+                        }
+                    }
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 8)
+
                 Button("Start Recording") {
                     Task {
                         await recorder.startRecordingWithCurrentSelection()
@@ -81,10 +94,11 @@ struct RecordingSourcePicker: View {
                 .disabled(!recorder.hasValidSelection)
             }
             .padding()
-            .background(Color(NSColor.windowBackgroundColor))
+            .background(.bar)
         }
-        .frame(width: 800, height: 600)
-        .background(Color(NSColor.windowBackgroundColor))
+        .frame(minWidth: 700, idealWidth: 900, maxWidth: .infinity,
+               minHeight: 500, idealHeight: 650, maxHeight: .infinity)
+        .background(.background)
         .task {
             await recorder.refreshAvailableContent()
         }
@@ -96,7 +110,7 @@ struct ScreenSelectionView: View {
     @Binding var isPresented: Bool
     
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 250))], spacing: 20) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], spacing: 20) {
             ForEach(recorder.availableDisplays, id: \.displayID) { display in
                 VStack {
                     // Display preview
@@ -118,7 +132,7 @@ struct ScreenSelectionView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(recorder.selectedDisplay?.displayID == display.displayID ? Color.accentColor : Color.clear, lineWidth: 3)
                         )
-                        .frame(height: 150)
+                        .frame(height: 140)
                     
                     Button("Select") {
                         recorder.selectedDisplay = display
@@ -143,7 +157,7 @@ struct WindowSelectionView: View {
     @Binding var isPresented: Bool
     
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200))], spacing: 16) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160))], spacing: 16) {
             ForEach(recorder.availableWindows, id: \.windowID) { window in
                 WindowThumbnail(
                     window: window,
@@ -183,43 +197,41 @@ struct WindowThumbnail: View {
                         if let thumbnail = thumbnail {
                             Image(nsImage: thumbnail)
                                 .resizable()
-                                .aspectRatio(contentMode: .fit)
+                                .scaledToFit()
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                         } else {
-                            VStack {
+                            VStack(spacing: 6) {
                                 Image(systemName: "app.fill")
                                     .font(.system(size: 30))
                                     .foregroundColor(.secondary)
                                 Text(window.title ?? "Untitled")
                                     .font(.caption)
                                     .lineLimit(1)
+                                    .truncationMode(.tail)
                             }
                             .padding(8)
                         }
                     }
                 )
-                .frame(height: 120)
+                .frame(height: 110)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(isSelected ? Color.accentColor : (isHovered ? Color.gray : Color.clear), lineWidth: isSelected ? 3 : 1)
                 )
-                .overlay(
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Image(systemName: "app.fill")
-                                .font(.caption2)
-                            Text(window.owningApplication?.applicationName ?? "Unknown")
-                                .font(.caption2)
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .padding(4)
+                .overlay(alignment: .bottomLeading) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "app.fill").font(.caption2)
+                        Text(window.owningApplication?.applicationName ?? "Unknown")
+                            .font(.caption2)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
-                )
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(6)
+                }
                 .scaleEffect(isHovered ? 1.05 : 1.0)
                 .animation(.easeInOut(duration: 0.1), value: isHovered)
         }
@@ -237,7 +249,8 @@ struct WindowThumbnail: View {
             
             // Set thumbnail size (smaller for better performance)
             let thumbnailSize = 300.0
-            let aspectRatio = window.frame.width / window.frame.height
+            let safeHeight = max(window.frame.height, 1)
+            let aspectRatio = window.frame.width / safeHeight
             
             if aspectRatio > 1 {
                 configuration.width = Int(thumbnailSize)

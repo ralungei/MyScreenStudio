@@ -7,7 +7,7 @@ struct ModernButton: View {
     let style: ModernButtonStyle
     let action: () -> Void
     let isDisabled: Bool
-    
+
     init(_ title: String, icon: String? = nil, style: ModernButtonStyle = .primary, disabled: Bool = false, action: @escaping () -> Void) {
         self.title = title
         self.icon = icon
@@ -15,31 +15,39 @@ struct ModernButton: View {
         self.action = action
         self.isDisabled = disabled
     }
-    
+
     var body: some View {
-        Button {
+        let button = Button {
             action()
         } label: {
             HStack(spacing: 8) {
                 if let icon = icon {
                     Image(systemName: icon)
                         .font(.system(size: style.iconSize, weight: style.iconWeight))
-                        .foregroundColor(isDisabled ? style.disabledForeground : style.foreground)
                 }
-                
+
                 Text(title)
                     .fontWeight(style.fontWeight)
-                    .foregroundColor(isDisabled ? style.disabledForeground : style.foreground)
             }
             .padding(.horizontal, style.horizontalPadding)
             .padding(.vertical, style.verticalPadding)
         }
-        .background(isDisabled ? style.disabledBackground : style.background)
-        .foregroundColor(isDisabled ? style.disabledForeground : style.foreground)
-        .cornerRadius(style.cornerRadius)
-        .contentShape(Rectangle())
-        .opacity(isDisabled ? 0.5 : 1.0)
         .disabled(isDisabled)
+        .opacity(isDisabled ? 0.5 : 1.0)
+
+        switch style {
+        case .primary:
+            button
+                .buttonStyle(.glassProminent)
+                .tint(Color(hex: "A4EB3F"))
+        case .secondary:
+            button
+                .buttonStyle(.glass)
+        case .destructive:
+            button
+                .buttonStyle(.glass)
+                .tint(.red)
+        }
     }
 }
 
@@ -48,35 +56,7 @@ enum ModernButtonStyle {
     case primary
     case secondary
     case destructive
-    
-    var background: Color {
-        switch self {
-        case .primary: return Color(hex: "A4EB3F")
-        case .secondary: return .gray.opacity(0.1)
-        case .destructive: return .red.opacity(0.1)
-        }
-    }
-    
-    var disabledBackground: Color {
-        switch self {
-        case .primary: return .gray.opacity(0.2)
-        case .secondary: return .gray.opacity(0.05)
-        case .destructive: return .red.opacity(0.05)
-        }
-    }
-    
-    var foreground: Color {
-        switch self {
-        case .primary: return .black
-        case .secondary: return .secondary
-        case .destructive: return .red
-        }
-    }
-    
-    var disabledForeground: Color {
-        return .secondary
-    }
-    
+
     var horizontalPadding: CGFloat {
         switch self {
         case .primary: return 24
@@ -84,11 +64,9 @@ enum ModernButtonStyle {
         case .destructive: return 20
         }
     }
-    
+
     var verticalPadding: CGFloat { 8 }
-    
-    var cornerRadius: CGFloat { 20 }
-    
+
     var fontWeight: Font.Weight {
         switch self {
         case .primary: return .medium
@@ -96,7 +74,7 @@ enum ModernButtonStyle {
         case .destructive: return .medium
         }
     }
-    
+
     var iconSize: CGFloat {
         switch self {
         case .primary: return 14
@@ -104,7 +82,7 @@ enum ModernButtonStyle {
         case .destructive: return 13
         }
     }
-    
+
     var iconWeight: Font.Weight {
         switch self {
         case .primary: return .medium
@@ -120,15 +98,15 @@ enum ModernButtonStyle {
         ModernButton("Primary Button", icon: "play.fill", style: .primary) {
             print("Primary tapped")
         }
-        
+
         ModernButton("Secondary Button", icon: "gear", style: .secondary) {
             print("Secondary tapped")
         }
-        
+
         ModernButton("Destructive Button", icon: "trash", style: .destructive) {
             print("Destructive tapped")
         }
-        
+
         ModernButton("Disabled Button", style: .primary, disabled: true) {
             print("This won't print")
         }

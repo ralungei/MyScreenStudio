@@ -1,18 +1,20 @@
 import Foundation
 import SwiftUI
+import Observation
 
 // MARK: - Recording Project Model
-class RecordingProject: ObservableObject, Codable, Identifiable {
+@Observable
+class RecordingProject: Codable, Identifiable {
     let id: UUID
-    @Published var name: String
-    @Published var createdAt: Date
-    @Published var lastModified: Date
-    @Published var duration: TimeInterval
+    var name: String
+    var createdAt: Date
+    var lastModified: Date
+    var duration: TimeInterval
     var videoPath: String // Path to the raw video file
     var thumbnailPath: String? // Path to thumbnail image
-    @Published var settings: RecordingSettings
-    @Published var effects: [VideoEffect]
-    @Published var exports: [ExportRecord]
+    var settings: RecordingSettings
+    var effects: [VideoEffect]
+    var exports: [ExportRecord]
     var mouseMetadata: CursorMetadata?
     
     init(name: String, videoPath: String, settings: RecordingSettings) {
@@ -46,6 +48,36 @@ class RecordingProject: ObservableObject, Codable, Identifiable {
         }
     }
     
+    // MARK: - Editor State Persistence
+
+    /// Directory containing the project files (alongside mouse_data.json, project.msstudio)
+    var projectDirectory: URL {
+        URL(fileURLWithPath: videoPath).deletingLastPathComponent()
+    }
+
+    func saveEditorState(_ state: EditorState) {
+        let url = projectDirectory.appendingPathComponent(EditorState.fileName)
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(state)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("⚠️ Failed to save editor state: \(error)")
+        }
+    }
+
+    func loadEditorState() -> EditorState? {
+        let url = projectDirectory.appendingPathComponent(EditorState.fileName)
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(EditorState.self, from: data)
+        } catch {
+            // No saved state yet — expected on first open
+            return nil
+        }
+    }
+
     // MARK: - Codable Implementation
     enum CodingKeys: String, CodingKey {
         case id, name, createdAt, lastModified, duration, videoPath, thumbnailPath, settings, effects, exports
@@ -161,9 +193,10 @@ struct ExportRecord: Codable, Identifiable {
 
 // MARK: - Project Manager
 @MainActor
-class ProjectManager: ObservableObject {
-    @Published var currentProject: RecordingProject?
-    @Published var availableProjects: [RecordingProject] = []
+@Observable
+class ProjectManager {
+    var currentProject: RecordingProject?
+    var availableProjects: [RecordingProject] = []
     
     private let projectsDirectory: URL
     private let fileManager = FileManager.default
@@ -187,7 +220,7 @@ class ProjectManager: ObservableObject {
         let projectName = name.isEmpty ? "Recording \(Date().timeIntervalSince1970)" : name
         
         // Create project first to get its ID
-        var project = RecordingProject(
+        let project = RecordingProject(
             name: projectName,
             videoPath: "", // Will be set after moving file
             settings: settings
@@ -274,7 +307,7 @@ class ProjectManager: ObservableObject {
     }
     
     func closeProject() {
-        if let project = currentProject {
+        if currentProject != nil {
             saveCurrentProject()
         }
         currentProject = nil
@@ -301,22 +334,14 @@ class ProjectManager: ObservableObject {
                 print("⚠️ Project folder not found at: \(projectFolder.path)")
             }
             
-            // Force UI update BEFORE removing to ensure SwiftUI detects the change
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                
-                // Remove from available projects list (this will trigger UI update)
-                self.availableProjects.removeAll { $0.id == project.id }
-                print("🗑️ Removed project from list. Available projects after deletion: \(self.availableProjects.count)")
-                
-                // Close project if it's currently open
-                if self.currentProject?.id == project.id {
-                    self.currentProject = nil
-                    print("🗑️ Closed current project")
-                }
-                
-                // Force UI update by triggering objectWillChange
-                self.objectWillChange.send()
+            // Remove from available projects list (this will trigger UI update)
+            self.availableProjects.removeAll { $0.id == project.id }
+            print("🗑️ Removed project from list. Available projects after deletion: \(self.availableProjects.count)")
+
+            // Close project if it's currently open
+            if self.currentProject?.id == project.id {
+                self.currentProject = nil
+                print("🗑️ Closed current project")
             }
             
             print("🗑️ Successfully deleted project: \(project.name)")
@@ -328,7 +353,6 @@ class ProjectManager: ObservableObject {
             if currentProject?.id == project.id {
                 currentProject = nil
             }
-            objectWillChange.send()
         }
     }
     

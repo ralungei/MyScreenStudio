@@ -1,16 +1,24 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Observation
+
+// MARK: - Click Effect Style
+enum ClickEffectStyle: String, CaseIterable, Codable {
+    case ring = "Ring"
+    case ripple = "Ripple"
+}
 
 // MARK: - Custom Cursor Model
 struct CustomCursor: Identifiable, Codable {
-    let id = UUID()
+    let id: UUID
     let name: String
     let imagePath: String
     let hotSpot: CGPoint
     var isActive: Bool = false
     
     init(name: String, imagePath: String, hotSpot: CGPoint = CGPoint(x: 0, y: 0)) {
+        self.id = UUID()
         self.name = name
         self.imagePath = imagePath
         self.hotSpot = hotSpot
@@ -28,10 +36,21 @@ struct CustomCursor: Identifiable, Codable {
 
 // MARK: - Cursor Manager
 @MainActor
-class CursorManager: ObservableObject {
-    @Published var availableCursors: [CustomCursor] = []
-    @Published var selectedCursor: CustomCursor?
-    @Published var isEnabled: Bool = true // Enabled by default
+@Observable
+class CursorManager {
+    var availableCursors: [CustomCursor] = []
+    var selectedCursor: CustomCursor?
+    var isEnabled: Bool = true
+
+    // Cursor appearance
+    var cursorScale: CGFloat = 2.0        // 0.5 ... 3.0
+    var smoothing: CGFloat = 0.12         // 0.02 (very smooth) ... 0.5 (snappy)
+    var showClickEffects: Bool = true
+    var clickEffectStyle: ClickEffectStyle = .ripple
+    var clickEffectColor: Color = .white
+    var clickEffectSize: CGFloat = 1.0     // 0.5 ... 2.0
+    var cursorOpacity: CGFloat = 1.0      // 0.3 ... 1.0
+    var cursorShadow: Bool = true
     
     private let cursorsDirectory: URL
     
@@ -45,25 +64,16 @@ class CursorManager: ObservableObject {
     
     func loadAvailableCursors() {
         availableCursors.removeAll()
-        
-        // Default system cursor
-        availableCursors.append(CustomCursor(name: "System Default", imagePath: ""))
-        
-        // Load custom cursors from bundle using Bundle.main.urls
+
         let bundle = Bundle.main
-        print("🔍 Searching for PNG cursor files in bundle")
-        
         if let pngURLs = bundle.urls(forResourcesWithExtension: "png", subdirectory: nil) {
             let cursorFiles = pngURLs.filter { url in
                 let name = url.deletingPathExtension().lastPathComponent.lowercased()
                 return name.contains("cursor") || name.contains("hand") || name.contains("pointer")
             }
-            
-            print("🖼️ Found \(cursorFiles.count) cursor PNG files in bundle")
-            
+
             for file in cursorFiles {
                 let name = file.deletingPathExtension().lastPathComponent
-                print("➕ Adding cursor: \(name) from \(file.path)")
                 let cursor = CustomCursor(
                     name: formatCursorName(name),
                     imagePath: file.path,
@@ -71,61 +81,49 @@ class CursorManager: ObservableObject {
                 )
                 availableCursors.append(cursor)
             }
-        } else {
-            print("❌ No PNG files found in bundle")
         }
-        
-        print("Loaded \(availableCursors.count) cursors from: \(cursorsDirectory.path)")
-        for cursor in availableCursors {
-            print("  - \(cursor.name): \(cursor.imagePath)")
-        }
-        
-        // Auto-select the first custom cursor by default (not System Default)
+
+        // Auto-select the first cursor by default
         if selectedCursor == nil {
-            selectedCursor = availableCursors.first { !$0.imagePath.isEmpty } ?? availableCursors.first
-            if let selected = selectedCursor {
-                print("🎯 Auto-selected cursor: \(selected.name)")
-                // Don't auto-apply cursor to system
-            }
+            selectedCursor = availableCursors.first
         }
     }
     
     private func formatCursorName(_ name: String) -> String {
-        return name
+        var clean = name
+            .replacingOccurrences(of: "@4x", with: "")
+            .replacingOccurrences(of: "@2x", with: "")
             .replacingOccurrences(of: "(1)", with: "2")
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: "-", with: " ")
-            .capitalized
+        // Capitalize each word
+        clean = clean.split(separator: " ").map { $0.capitalized }.joined(separator: " ")
+        return clean
     }
-    
+
     private func getHotSpotForCursor(named name: String) -> CGPoint {
-        // Define hot spots for different cursor types
-        let lowercaseName = name.lowercased()
-        
-        if lowercaseName.contains("hand") {
-            return CGPoint(x: 8, y: 8) // Hand cursor hot spot
-        } else if lowercaseName.contains("cursor") {
-            return CGPoint(x: 0, y: 0) // Arrow cursor hot spot
+        let n = name.lowercased()
+        if n.contains("pointer") || n.contains("hand") {
+            return CGPoint(x: 6, y: 1)   // Finger tip
+        } else if n.contains("drag") {
+            return CGPoint(x: 12, y: 12)  // Center of palm
+        } else if n.contains("default") || n.contains("cursor") {
+            return CGPoint(x: 1.75, y: 0.25)  // Arrow tip (measured from @4x PNG)
         }
-        
-        return CGPoint(x: 8, y: 8) // Default hot spot
+        return CGPoint(x: 1.75, y: 0.25)
     }
     
     func selectCursor(_ cursor: CustomCursor) {
         selectedCursor = cursor
-        // Don't apply cursor to system - just store selection
-        objectWillChange.send()
     }
-    
+
     func enableCustomCursor(_ enabled: Bool) {
         isEnabled = enabled
         if enabled {
             applyCursor()
         } else {
-            // Reset to system cursor
             NSCursor.arrow.set()
         }
-        objectWillChange.send()
     }
     
     private func applyCursor() {
@@ -193,65 +191,3 @@ struct CursorPreviewView: View {
     }
 }
 
-// MARK: - Cursor Settings View
-struct CursorSettingsView: View {
-    @StateObject private var cursorManager = CursorManager()
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Custom Cursor")
-                    .font(.headline)
-                Spacer()
-                Text("\(cursorManager.availableCursors.count) cursors")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Toggle("Enable Custom Cursor", isOn: $cursorManager.isEnabled)
-                .onChange(of: cursorManager.isEnabled) { enabled in
-                    cursorManager.enableCustomCursor(enabled)
-                }
-            
-            if cursorManager.isEnabled {
-                Text("Select Cursor:")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                LazyVGrid(columns: [
-                    GridItem(.adaptive(minimum: 90))
-                ], spacing: 12) {
-                    ForEach(cursorManager.availableCursors) { cursor in
-                        CursorPreviewView(
-                            cursor: cursor,
-                            isSelected: cursorManager.selectedCursor?.id == cursor.id,
-                            onSelect: {
-                                cursorManager.selectCursor(cursor)
-                            }
-                        )
-                    }
-                }
-                .padding(.vertical)
-            }
-            
-            Divider()
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Cursor Info:")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Text("• Custom cursors will appear in your recordings")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                
-                Text("• \(cursorManager.availableCursors.count) cursors available")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-        }
-        .padding()
-    }
-}

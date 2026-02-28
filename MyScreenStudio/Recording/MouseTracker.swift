@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import Observation
 
 // MARK: - Mouse Event Data Models
 
@@ -14,7 +15,9 @@ struct MouseEvent: Codable {
 enum MouseEventType: Codable, Equatable {
     case move
     case leftClick
+    case leftClickUp
     case rightClick
+    case rightClickUp
     case leftDrag
     case rightDrag
     case scroll(deltaX: Double, deltaY: Double)
@@ -22,10 +25,25 @@ enum MouseEventType: Codable, Equatable {
 
 struct CursorMetadata: Codable {
     var events: [MouseEvent] = []
+    var keyTimestamps: [TimeInterval] = []  // Timestamps of keyDown events
     var recordingStartTime: Date?
     var recordingDuration: TimeInterval = 0
     var windowFrame: CGRect? // For window recordings
-    
+    var recordedArea: CGRect? // The actual recorded area (screen or window frame)
+
+    // Custom decoder so old recordings without keyTimestamps don't crash
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        events = try container.decodeIfPresent([MouseEvent].self, forKey: .events) ?? []
+        keyTimestamps = try container.decodeIfPresent([TimeInterval].self, forKey: .keyTimestamps) ?? []
+        recordingStartTime = try container.decodeIfPresent(Date.self, forKey: .recordingStartTime)
+        recordingDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .recordingDuration) ?? 0
+        windowFrame = try container.decodeIfPresent(CGRect.self, forKey: .windowFrame)
+        recordedArea = try container.decodeIfPresent(CGRect.self, forKey: .recordedArea)
+    }
+
+    init() {}
+
     mutating func addEvent(_ event: MouseEvent) {
         events.append(event)
     }
@@ -52,7 +70,7 @@ struct CursorMetadata: Codable {
         switch type {
         case .leftClick, .rightClick, .leftDrag, .rightDrag:
             return true
-        case .move, .scroll:
+        case .move, .leftClickUp, .rightClickUp, .scroll:
             return false
         }
     }
@@ -61,9 +79,10 @@ struct CursorMetadata: Codable {
 // MARK: - Mouse Tracker
 
 @MainActor
-class MouseTracker: ObservableObject {
-    @Published var isTracking = false
-    @Published var metadata = CursorMetadata()
+@Observable
+class MouseTracker {
+    var isTracking = false
+    var metadata = CursorMetadata()
     
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -71,9 +90,9 @@ class MouseTracker: ObservableObject {
     private var recordingWindowFrame: CGRect?
     
     // Start tracking mouse events
-    func startTracking(windowFrame: CGRect? = nil) {
+    func startTracking(windowFrame: CGRect? = nil, recordedArea: CGRect? = nil) {
         guard !isTracking else { return }
-        
+
         print("🖱️ Starting mouse tracking...")
         isTracking = true
         startTime = Date()
@@ -81,7 +100,8 @@ class MouseTracker: ObservableObject {
         metadata = CursorMetadata()
         metadata.recordingStartTime = startTime
         metadata.windowFrame = windowFrame
-        
+        metadata.recordedArea = recordedArea ?? windowFrame
+
         setupMouseMonitoring()
     }
     
@@ -102,21 +122,28 @@ class MouseTracker: ObservableObject {
     }
     
     private func setupMouseMonitoring() {
-        // Monitor mouse events globally (when app is not in focus)
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [
+        let mouseTypes: NSEvent.EventTypeMask = [
             .mouseMoved, .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
-            .leftMouseDragged, .rightMouseDragged, .scrollWheel
-        ]) { [weak self] event in
-            self?.handleMouseEvent(event)
+            .leftMouseDragged, .rightMouseDragged, .scrollWheel, .keyDown
+        ]
+
+        // Monitor events globally (when app is not in focus)
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseTypes) { [weak self] event in
+            if event.type == .keyDown {
+                self?.handleKeyEvent(event)
+            } else {
+                self?.handleMouseEvent(event)
+            }
         }
-        
-        // Monitor mouse events locally (when app is in focus)
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [
-            .mouseMoved, .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
-            .leftMouseDragged, .rightMouseDragged, .scrollWheel
-        ]) { [weak self] event in
-            self?.handleMouseEvent(event)
-            return event // Don't consume the event
+
+        // Monitor events locally (when app is in focus)
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseTypes) { [weak self] event in
+            if event.type == .keyDown {
+                self?.handleKeyEvent(event)
+            } else {
+                self?.handleMouseEvent(event)
+            }
+            return event
         }
     }
     
@@ -150,10 +177,14 @@ class MouseTracker: ObservableObject {
         switch event.type {
         case .mouseMoved:
             eventType = .move
-        case .leftMouseDown, .leftMouseUp:
+        case .leftMouseDown:
             eventType = .leftClick
-        case .rightMouseDown, .rightMouseUp:
+        case .leftMouseUp:
+            eventType = .leftClickUp
+        case .rightMouseDown:
             eventType = .rightClick
+        case .rightMouseUp:
+            eventType = .rightClickUp
         case .leftMouseDragged:
             eventType = .leftDrag
         case .rightMouseDragged:
@@ -180,6 +211,14 @@ class MouseTracker: ObservableObject {
         }
     }
     
+    private func handleKeyEvent(_ event: NSEvent) {
+        guard isTracking, let startTime = startTime else { return }
+        // Ignore modifier-only keys (Shift, Cmd, etc.)
+        guard !event.modifierFlags.contains(.command) else { return }
+        let timestamp = Date().timeIntervalSince(startTime)
+        metadata.keyTimestamps.append(timestamp)
+    }
+
     // Convert screen coordinates to window-relative coordinates for window recordings
     func convertToWindowCoordinates(_ screenPoint: CGPoint, windowFrame: CGRect) -> CGPoint {
         return CGPoint(
@@ -203,9 +242,8 @@ class MouseTracker: ObservableObject {
     }
     
     deinit {
-        Task { @MainActor in
-            cleanupMonitoring()
-        }
+        // NSEvent monitors are automatically removed when their object is deallocated
+        // Explicit cleanup is not required for deinit
     }
 }
 
