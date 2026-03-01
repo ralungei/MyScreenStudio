@@ -110,6 +110,7 @@ class CALayerVideoExporter2 {
                )
 
                let audioTrack = try? await asset.loadTracks(withMediaType: .audio).first
+               print("Export: audio track \(audioTrack != nil ? "found" : "NOT found") in source video")
                var compositionAudioTrack: AVMutableCompositionTrack? = nil
                if audioTrack != nil {
                    compositionAudioTrack = composition.addMutableTrack(

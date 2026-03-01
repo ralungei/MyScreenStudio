@@ -294,88 +294,61 @@ struct ExportConfigurationView: View {
     }
 }
 
-// MARK: - Export Progress View (Dynamic Island Style)
+// MARK: - Export Progress View
 struct ExportProgressView: View {
     var exportManager: CALayerVideoExporter2
     @Environment(\.dismiss) private var dismiss
-    
+
     var body: some View {
-        ZStack {
-            VStack(spacing: 24) {
-                // Modern Progress Ring
-                VStack(spacing: 16) {
-                    ZStack {
-                        // Background ring
-                        Circle()
-                            .stroke(.gray.opacity(0.15), lineWidth: 6)
-                            .frame(width: 100, height: 100)
-                        
-                        // Progress ring
-                        Circle()
-                            .trim(from: 0, to: CGFloat(exportManager.exportProgress))
-                            .stroke(.blue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                            .frame(width: 100, height: 100)
-                            .rotationEffect(.degrees(-90))
-                            .animation(.linear(duration: 0.1), value: exportManager.exportProgress)
-                        
-                        // Center content
-                        VStack(spacing: 4) {
-                            Image(systemName: "square.and.arrow.up.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundStyle(.blue)
-                            
-                            Text(String(format: "%.0f%%", exportManager.exportProgress * 100))
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    
-                    VStack(spacing: 4) {
-                        Text("Exporting Video")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        Text("Processing your video with effects...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                }
-                
-                // Progress Stats - Compact Pills
-                if let progressData = exportManager.exportProgressData {
-                    HStack(spacing: 12) {
-                        StatPill(
-                            icon: "film",
-                            label: "Frame",
-                            value: "\(progressData.currentFrame)/\(progressData.totalFrames)"
-                        )
-                        
-                        StatPill(
-                            icon: "clock",
-                            label: "Time Left",
-                            value: TimeFormatting.mmss(progressData.estimatedTimeRemaining)
-                        )
-                    }
-                }
-                
-                // Cancel Button - Subtle style
-                ModernButton("Cancel Export", style: .destructive) {
-                    exportManager.cancelExport()
-                    dismiss()
+        VStack(spacing: 20) {
+            // Progress ring + percentage
+            ZStack {
+                Circle()
+                    .stroke(.gray.opacity(0.15), lineWidth: 6)
+                    .frame(width: 88, height: 88)
+
+                Circle()
+                    .trim(from: 0, to: CGFloat(exportManager.exportProgress))
+                    .stroke(.blue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                    .frame(width: 88, height: 88)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.linear(duration: 0.1), value: exportManager.exportProgress)
+
+                Text(String(format: "%.0f%%", exportManager.exportProgress * 100))
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .monospacedDigit()
+            }
+
+            VStack(spacing: 4) {
+                Text("Exporting Video")
+                    .font(.headline)
+
+                // Stats inline — monospaced to prevent jitter
+                if let p = exportManager.exportProgressData {
+                    Text("Frame \(p.currentFrame)/\(p.totalFrames)  ·  \(TimeFormatting.mmss(p.estimatedTimeRemaining)) left")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Preparing…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .padding(28)
+
+            ModernButton("Cancel Export", style: .destructive) {
+                exportManager.cancelExport()
+                dismiss()
+            }
         }
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 32))
-        .frame(width: 320, height: 360)
+        .padding(28)
+        .frame(width: 280)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24))
         .onChange(of: exportManager.isExporting) { _, isExporting in
             if !isExporting {
                 dismiss()
             }
         }
     }
-    
 }
 
 // MARK: - Summary Pill Component
@@ -415,38 +388,5 @@ struct SummaryPill: View {
     }
 }
 
-// MARK: - Stat Pill Component
-struct StatPill: View {
-    let icon: String
-    let label: String
-    let value: String
-    
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundStyle(.blue.opacity(0.8))
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                
-                Text(value)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.primary)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.blue.opacity(0.08))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(.blue.opacity(0.2), lineWidth: 0.5)
-        )
-    }
-}
 
 
